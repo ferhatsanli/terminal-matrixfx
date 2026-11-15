@@ -46,9 +46,8 @@ MAX_PARSE = 512 * 1024   # bigger bursts: only the tail is parsed/animated
 # Trail geometry (in cells, measured backwards from the head)
 GHOST = 3      # random glyphs right behind the head
 GLOWTXT = 10   # real text still glowing after the ghost
-RESIDUE = 16   # random glyphs that fade out past the end of the text
-AHEAD = 3      # glow bleeding in front of the head
-TRAIL = GHOST + max(GLOWTXT, RESIDUE)
+AHEAD = 3      # glow bleeding in front of the head (never past the text)
+TRAIL = GHOST + GLOWTXT
 
 GLYPHS = ("ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ"
           "0123456789" "Z:.=*+-<>|¦")
@@ -57,8 +56,6 @@ HEAD_FG = (235, 255, 235)
 GHOST_FG = ((200, 255, 210), (120, 255, 160), (80, 235, 130))
 TEXT_GLOW_FROM = (190, 255, 200)
 TEXT_GLOW_TO = (60, 230, 120)
-RESIDUE_FROM = (60, 210, 110)
-RESIDUE_TO = (8, 45, 22)
 GLOW_BG = ((26, 92, 46), (16, 64, 32), (9, 38, 19), (4, 18, 9), (2, 8, 4))
 
 CSI_RE = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
@@ -258,13 +255,18 @@ class Animation:
         self.lines = []  # [row_index, start_col, text_len, head_prev, finished]
         for i, cells in enumerate(rows):
             sc = model.first_changed if i == 0 else 0
-            ln = (max(cells) + 1) if cells else 0
+            # the effect stops at the last visible character of the line
+            visible = [c for c, v in cells.items()
+                       if v is not CONT and v[0].strip()]
+            ln = max([c + cells[c][2] for c in visible] or [0])
             if i == len(rows) - 1 and ln == 0:
                 continue                      # cursor row after final newline
             if ln <= sc:
                 continue                      # nothing visible to animate
             self.lines.append([i, sc, ln, float(sc), False])
         n = len(self.lines)
+        # same speed for every line: short lines simply finish earlier
+        self.travel = max([l[2] - l[1] for l in self.lines] or [1]) + TRAIL
         if n <= 1:
             self.row_dur, self.stagger = DURATION, 0.0
         else:
@@ -296,7 +298,6 @@ class Animation:
         t = now - self.start
         out = []
         all_done = True
-        travel_end = self.width + TRAIL + 1
         for idx, ln in enumerate(self.lines):
             row, sc, tl, head_prev, finished = ln
             if finished:
@@ -305,13 +306,13 @@ class Animation:
             if p <= 0:
                 all_done = False
                 continue
-            if p >= 1:
+            head = sc + p * self.travel
+            if p >= 1 or head >= tl + TRAIL:
                 out.append(self.goto(row, sc))
                 out.append(render_final(self.model.rows[row], sc))
                 ln[4] = True
                 continue
             all_done = False
-            head = sc + p * (travel_end - sc)
             ln[3] = head
             out.append(self._draw(row, sc, tl, head_prev, head))
         if out:
@@ -323,7 +324,7 @@ class Animation:
         cells = self.model.rows[row]
         h = int(head)
         lo = max(sc, int(head_prev) - TRAIL - 1)
-        hi = min(self.width - 1, h + AHEAD)
+        hi = min(self.width - 1, h + AHEAD, tl - 1)
         while lo > sc and cells.get(lo) is CONT:
             lo -= 1
         if lo > hi:
@@ -347,32 +348,24 @@ class Animation:
                            + random.choice(GLYPHS))
                 x += 1
                 continue
-            if x < tl:
-                if cell is CONT:
+            if cell is CONT:
+                x += 1
+                continue
+            if d <= GHOST + GLOWTXT:
+                c = lerp(TEXT_GLOW_FROM, TEXT_GLOW_TO, (d - GHOST) / GLOWTXT)
+                pre = "\x1b[0m" + fg(c) + glow_bg(d)
+            else:
+                pre = "\x1b[0m" + (cell[1] if cell else "")
+            if cell is None:
+                out.append(pre + " ")
+                x += 1
+            else:
+                if cell[2] == 2 and x + 1 > hi:
+                    out.append(pre + " ")   # no room, finish next frame
                     x += 1
                     continue
-                if d <= GHOST + GLOWTXT:
-                    c = lerp(TEXT_GLOW_FROM, TEXT_GLOW_TO, (d - GHOST) / GLOWTXT)
-                    pre = "\x1b[0m" + fg(c) + glow_bg(d)
-                else:
-                    pre = "\x1b[0m" + (cell[1] if cell else "")
-                if cell is None:
-                    out.append(pre + " ")
-                    x += 1
-                else:
-                    if cell[2] == 2 and x + 1 > hi:
-                        out.append(pre + " ")   # no room, finish next frame
-                        x += 1
-                        continue
-                    out.append(pre + cell[0])
-                    x += cell[2]
-                continue
-            if d <= GHOST + RESIDUE:
-                c = lerp(RESIDUE_FROM, RESIDUE_TO, (d - GHOST) / RESIDUE)
-                out.append("\x1b[0m" + fg(c) + glow_bg(d) + random.choice(GLYPHS))
-            else:
-                out.append("\x1b[0m ")
-            x += 1
+                out.append(pre + cell[0])
+                x += cell[2]
         out.append("\x1b[0m")
         return "".join(out)
 
