@@ -1,4 +1,4 @@
-# iterm-matrixfx
+# terminal-matrixfx
 
 Command output in your terminal, written to the screen like the cast credits of *The Matrix Revolutions*.
 
@@ -6,7 +6,7 @@ Command output in your terminal, written to the screen like the cast credits of 
 
 Lines don't appear all at once. A glowing head streams across each line from left to right, dragging a short ghost trail of random Matrix glyphs, and the real text is left glowing behind it before it settles into its normal colors.
 
-Despite the name, it works in **any terminal emulator** on macOS and Linux: iTerm2, Terminal.app, Ghostty, kitty, WezTerm, Alacritty, GNOME Terminal, Konsole, the VS Code terminal and more.
+It works in **any terminal emulator** on macOS and Linux: iTerm2, Terminal.app, Ghostty, kitty, WezTerm, Alacritty, GNOME Terminal, Konsole, the VS Code terminal and more.
 
 ## Features
 
@@ -41,8 +41,8 @@ Terminal themes can only change colors, not animate text. Instead, `mfx.py` is a
 ## Installation
 
 ```bash
-git clone https://github.com/ferhatsanli/iterm-matrixfx.git
-cd iterm-matrixfx
+git clone https://github.com/ferhatsanli/terminal-matrixfx.git
+cd terminal-matrixfx
 sh install.sh
 ```
 
@@ -66,7 +66,7 @@ sh install.sh zsh bash   # both
 ### Updating
 
 ```bash
-cd iterm-matrixfx
+cd terminal-matrixfx
 git pull
 sh install.sh
 ```
@@ -109,7 +109,7 @@ MFX_SKIP_NOARGS+=(deno)       # not animated when called without arguments (REPL
 ## Uninstall
 
 ```bash
-cd iterm-matrixfx
+cd terminal-matrixfx
 sh uninstall.sh
 ```
 
