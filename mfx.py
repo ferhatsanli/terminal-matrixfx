@@ -2,19 +2,23 @@
 """
 mfx - Matrix Revolutions style output effect for interactive shells.
 
-Runs your shell inside a pseudo-terminal and animates the output of every
+Works in any terminal emulator. Runs your shell inside a pseudo-terminal and animates the output of every
 command: each line streams in from left to right behind a glowing head that
 drags a ghost trail of random Matrix glyphs. The whole output of a command
 always finishes within MFX_DURATION seconds (default 1.0).
 
 The shell marks where command output starts/ends with two private OSC
-sequences (see mfx.zsh). Everything else (prompt, typed input, full-screen
+sequences (see mfx.zsh / mfx.bash). Everything else (prompt, typed input, full-screen
 apps) is passed through untouched.
 
 Environment variables:
   MFX_DURATION   total animation time per output burst in seconds (default 1.0)
   MFX_FPS        frames per second (default 40)
   MFX_GLOW       1 = glowing background around the head, 0 = off (default 1)
+  MFX_COLORS     truecolor | 256 | 16 (default: detected from the terminal)
+  MFX_GLYPHS     katakana | ascii (default: katakana, ascii on the Linux console)
+
+Usage: mfx.py [shell]   (default: $SHELL)
 """
 
 import codecs
@@ -49,8 +53,49 @@ GLOWTXT = 10   # real text still glowing after the ghost
 AHEAD = 3      # glow bleeding in front of the head (never past the text)
 TRAIL = GHOST + GLOWTXT
 
-GLYPHS = ("ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ"
-          "0123456789" "Z:.=*+-<>|¦")
+KATAKANA_GLYPHS = ("ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ"
+                   "0123456789" "Z:.=*+-<>|¦")
+ASCII_GLYPHS = "0123456789ABCDEFZ:.=*+-<>|$#%&@"
+
+
+def detect_color_mode():
+    forced = os.environ.get("MFX_COLORS", "").strip().lower()
+    if forced in ("truecolor", "24bit"):
+        return "truecolor"
+    if forced in ("256", "16"):
+        return forced
+    term = os.environ.get("TERM", "")
+    colorterm = os.environ.get("COLORTERM", "").lower()
+    program = os.environ.get("TERM_PROGRAM", "")
+    if term in ("linux", "dumb", "vt100", "vt220"):
+        return "16"
+    if colorterm in ("truecolor", "24bit"):
+        return "truecolor"
+    if program == "Apple_Terminal":
+        # Terminal.app supports 24-bit color since macOS 26 Tahoe (Darwin 25)
+        try:
+            darwin = int(os.uname().release.split(".")[0])
+        except ValueError:
+            darwin = 0
+        return "truecolor" if darwin >= 25 else "256"
+    if program in ("iTerm.app", "WezTerm", "vscode", "ghostty", "Hyper", "Tabby",
+                   "WarpTerminal", "rio"):
+        return "truecolor"
+    if term in ("xterm-kitty", "alacritty", "foot", "wezterm", "xterm-ghostty",
+                "contour") or term.endswith("-direct"):
+        return "truecolor"
+    if "256" in term:
+        return "256"
+    return "16"
+
+
+COLOR_MODE = detect_color_mode()
+if COLOR_MODE == "16":
+    GLOW = False                      # no way to draw a soft glow with 16 colors
+_glyph_mode = os.environ.get("MFX_GLYPHS", "").strip().lower()
+if _glyph_mode not in ("katakana", "ascii"):
+    _glyph_mode = "ascii" if os.environ.get("TERM") == "linux" else "katakana"
+GLYPHS = ASCII_GLYPHS if _glyph_mode == "ascii" else KATAKANA_GLYPHS
 
 HEAD_FG = (235, 255, 235)
 GHOST_FG = ((200, 255, 210), (120, 255, 160), (80, 235, 130))
@@ -71,12 +116,54 @@ def lerp(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
+_CUBE = (0, 95, 135, 175, 215, 255)
+_cache256 = {}
+
+
+def rgb_to_256(c):
+    """Nearest xterm-256 palette index for an RGB tuple."""
+    if c in _cache256:
+        return _cache256[c]
+
+    def q(v):
+        return 0 if v < 48 else 1 if v < 115 else (v - 35) // 40
+
+    qr, qg, qb = q(c[0]), q(c[1]), q(c[2])
+    cube = (_CUBE[qr], _CUBE[qg], _CUBE[qb])
+    cube_idx = 16 + 36 * qr + 6 * qg + qb
+    avg = sum(c) // 3
+    gi = 0 if avg < 8 else min(23, (avg - 8) // 10)
+    gv = 8 + 10 * gi
+
+    def dist(a):
+        return sum((a[i] - c[i]) ** 2 for i in range(3))
+
+    gray_penalty = 3 if max(c) - min(c) > 30 else 1   # keep the green hue
+    idx = cube_idx if dist(cube) <= gray_penalty * dist((gv, gv, gv)) else 232 + gi
+    _cache256[c] = idx
+    return idx
+
+
 def fg(c):
-    return "\x1b[38;2;%d;%d;%dm" % c
+    if COLOR_MODE == "truecolor":
+        return "\x1b[38;2;%d;%d;%dm" % c
+    if COLOR_MODE == "256":
+        return "\x1b[38;5;%dm" % rgb_to_256(c)
+    if min(c) > 170:
+        return "\x1b[97m"            # bright white
+    if max(c) >= 200:
+        return "\x1b[92m"            # bright green
+    if max(c) >= 100:
+        return "\x1b[32m"            # green
+    return "\x1b[2;32m"              # dim green
 
 
 def bg(c):
-    return "\x1b[48;2;%d;%d;%dm" % c
+    if COLOR_MODE == "truecolor":
+        return "\x1b[48;2;%d;%d;%dm" % c
+    if COLOR_MODE == "256":
+        return "\x1b[48;5;%dm" % rgb_to_256(c)
+    return ""
 
 
 def glow_bg(dist):
@@ -570,7 +657,8 @@ def set_winsize(fd):
 def main():
     if not (os.isatty(0) and os.isatty(1)):
         return 2
-    shell = os.environ.get("SHELL") or "/bin/zsh"
+    shell = (sys.argv[1] if len(sys.argv) > 1 else "") or \
+        os.environ.get("SHELL") or "/bin/sh"
     master, slave = os.openpty()
     try:
         termios.tcsetattr(slave, termios.TCSANOW, termios.tcgetattr(0))
@@ -591,7 +679,8 @@ def main():
                 os.dup2(slave, fd)
             if slave > 2:
                 os.close(slave)
-            os.environ["MFX_ACTIVE"] = "1"
+            # hooks only fire on this exact terminal (not in nested tmux panes)
+            os.environ["MFX_ACTIVE"] = os.ttyname(0)
             os.execvp(shell, [shell, "-i"])
         finally:
             os._exit(127)

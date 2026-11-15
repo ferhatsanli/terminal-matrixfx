@@ -1,6 +1,6 @@
-# mfx.zsh - shell hooks for the Matrix output effect (source at the END of ~/.zshrc)
-# Only active inside the mfx proxy.
-[[ -n $MFX_ACTIVE ]] || return 0
+# mfx.zsh - zsh hooks for the Matrix output effect (sourced at the END of ~/.zshrc)
+# Only active directly inside the mfx proxy (not in nested terminals like tmux panes).
+[[ -n $MFX_ACTIVE && $MFX_ACTIVE == $TTY ]] || return 0
 
 typeset -g MFX_ENABLED=${MFX_ENABLED:-1}
 # mfx itself marks output that did not end with a newline
