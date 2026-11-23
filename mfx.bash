@@ -6,6 +6,7 @@ if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) ))
 fi
 
 MFX_ENABLED=${MFX_ENABLED:-1}
+MFX_SOUND_ENABLED=${MFX_SOUND_ENABLED:-1}
 
 # Full-screen / interactive programs: never animated.
 MFX_SKIP=(
@@ -42,7 +43,7 @@ _mfx_start() {
   local cmd=${words[i]##*/}
   _mfx_in "$cmd" "${MFX_SKIP[@]}" && return 0
   _mfx_in "$cmd" "${MFX_SKIP_NOARGS[@]}" && (( i == ${#words[@]} - 1 )) && return 0
-  printf '\e]7770;S\a'
+  if (( MFX_SOUND_ENABLED )); then printf '\e]7770;S\a'; else printf '\e]7770;Q\a'; fi
 }
 
 _mfx_end() {
@@ -50,10 +51,17 @@ _mfx_end() {
 }
 
 mfx() {
-  case $1 in
-    on)  MFX_ENABLED=1 ;;
-    off) MFX_ENABLED=0 ;;
-    *)   if (( MFX_ENABLED )); then echo "mfx: on  (usage: mfx on|off)"; else echo "mfx: off  (usage: mfx on|off)"; fi ;;
+  case "$1 $2" in
+    "on "*)      MFX_ENABLED=1 ;;
+    "off "*)     MFX_ENABLED=0 ;;
+    "sound on")  MFX_SOUND_ENABLED=1 ;;
+    "sound off") MFX_SOUND_ENABLED=0 ;;
+    *)
+      local fx=off snd=off
+      (( MFX_ENABLED )) && fx=on
+      (( MFX_SOUND_ENABLED )) && snd=on
+      echo "mfx: effect $fx, sound $snd  (usage: mfx on|off, mfx sound on|off)"
+      ;;
   esac
 }
 

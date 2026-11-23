@@ -24,7 +24,7 @@ if [ -z "$shells" ]; then
 fi
 
 mkdir -p "$DEST"
-cp "$SRC/mfx.py" "$SRC/mfx.zsh" "$SRC/mfx.bash" "$DEST/"
+cp "$SRC/mfx.py" "$SRC/mfx.zsh" "$SRC/mfx.bash" "$SRC/mfx-done.wav" "$DEST/"
 chmod +x "$DEST/mfx.py"
 
 # Remove blocks written by any earlier version of this installer.

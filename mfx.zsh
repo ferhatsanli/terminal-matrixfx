@@ -3,6 +3,7 @@
 [[ -n $MFX_ACTIVE && $MFX_ACTIVE == $TTY ]] || return 0
 
 typeset -g MFX_ENABLED=${MFX_ENABLED:-1}
+typeset -g MFX_SOUND_ENABLED=${MFX_SOUND_ENABLED:-1}
 # mfx itself marks output that did not end with a newline
 setopt NO_PROMPT_SP
 
@@ -29,7 +30,7 @@ _mfx_preexec() {
   local cmd=${words[i]:t}
   (( ${MFX_SKIP[(Ie)$cmd]} )) && return 0
   (( ${MFX_SKIP_NOARGS[(Ie)$cmd]} )) && (( i == $#words )) && return 0
-  printf '\e]7770;S\a'
+  if (( MFX_SOUND_ENABLED )); then printf '\e]7770;S\a'; else printf '\e]7770;Q\a'; fi
 }
 
 _mfx_precmd() {
@@ -37,10 +38,17 @@ _mfx_precmd() {
 }
 
 mfx() {
-  case $1 in
-    on)  MFX_ENABLED=1 ;;
-    off) MFX_ENABLED=0 ;;
-    *)   print -r -- "mfx: $( (( MFX_ENABLED )) && print on || print off )  (usage: mfx on|off)" ;;
+  case "$1 $2" in
+    "on "*)      MFX_ENABLED=1 ;;
+    "off "*)     MFX_ENABLED=0 ;;
+    "sound on")  MFX_SOUND_ENABLED=1 ;;
+    "sound off") MFX_SOUND_ENABLED=0 ;;
+    *)
+      local fx=off snd=off
+      (( MFX_ENABLED )) && fx=on
+      (( MFX_SOUND_ENABLED )) && snd=on
+      echo "mfx: effect $fx, sound $snd  (usage: mfx on|off, mfx sound on|off)"
+      ;;
   esac
 }
 

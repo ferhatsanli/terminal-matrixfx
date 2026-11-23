@@ -17,6 +17,8 @@ Environment variables:
   MFX_GLOW       1 = glowing background around the head, 0 = off (default 1)
   MFX_COLORS     truecolor | 256 | 16 (default: detected from the terminal)
   MFX_GLYPHS     katakana | ascii (default: katakana, ascii on the Linux console)
+  MFX_SOUND      1 = play a sound when an animated output finishes, 0 = off (default 1)
+  MFX_SOUND_FILE sound to play (default: mfx-done.wav next to this script)
 
 Usage: mfx.py [shell]   (default: $SHELL)
 """
@@ -28,7 +30,9 @@ import os
 import random
 import re
 import select
+import shutil
 import signal
+import subprocess
 import struct
 import sys
 import termios
@@ -37,12 +41,16 @@ import tty
 import unicodedata
 
 MARK_START = b"\x1b]7770;S\x07"
+MARK_START_QUIET = b"\x1b]7770;Q\x07"   # start, but no sound for this command
 MARK_END = b"\x1b]7770;E\x07"
-MARKERS = (MARK_START, MARK_END)
+MARKERS = (MARK_START, MARK_START_QUIET, MARK_END)
 
 DURATION = float(os.environ.get("MFX_DURATION", "1.0"))
 FPS = float(os.environ.get("MFX_FPS", "40"))
 GLOW = os.environ.get("MFX_GLOW", "1") != "0"
+SOUND = os.environ.get("MFX_SOUND", "1") != "0"
+SOUND_FILE = os.environ.get("MFX_SOUND_FILE") or os.path.join(
+    os.path.dirname(os.path.realpath(__file__)), "mfx-done.wav")
 
 IDLE_GAP = 0.03          # seconds of silence that closes an output burst
 MAX_PARSE = 512 * 1024   # bigger bursts: only the tail is parsed/animated
@@ -473,6 +481,38 @@ class Animation:
         self.done = True
 
 
+class SoundPlayer:
+    """Plays the 'output finished' sound without blocking the terminal."""
+
+    def __init__(self):
+        self.cmd = None
+        self.procs = []
+        if not SOUND or not os.path.isfile(SOUND_FILE):
+            return
+        for player, args in (("afplay", []),            # macOS
+                             ("pw-play", []),           # PipeWire
+                             ("paplay", []),            # PulseAudio
+                             ("aplay", ["-q"])):        # ALSA
+            path = shutil.which(player)
+            if path:
+                self.cmd = [path] + args + [SOUND_FILE]
+                break
+
+    def play(self):
+        self.reap()
+        if not self.cmd or len(self.procs) >= 2:
+            return
+        try:
+            self.procs.append(subprocess.Popen(
+                self.cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True))
+        except OSError:
+            self.cmd = None
+
+    def reap(self):
+        self.procs = [p for p in self.procs if p.poll() is None]
+
+
 class Proxy:
     def __init__(self, master):
         self.master = master
@@ -482,6 +522,9 @@ class Proxy:
         self.interactive = False
         self.last_data = 0.0
         self.anim = None
+        self.sound = SoundPlayer()
+        self.sound_wanted = False
+        self.animated = False
         self.reset_command()
 
     def reset_command(self):
@@ -528,10 +571,11 @@ class Proxy:
                 return
             self._push_data(buf[:i])
             rest = buf[i:]
-            if rest.startswith(MARK_START):
+            if rest.startswith(MARK_START) or rest.startswith(MARK_START_QUIET):
                 self.capturing = True
                 self.interactive = False
-                self.queue.append(["start", b""])
+                quiet = rest.startswith(MARK_START_QUIET)
+                self.queue.append(["start", b"q" if quiet else b""])
                 buf = rest[len(MARK_START):]
             elif rest.startswith(MARK_END):
                 if self.capturing and not self.interactive:
@@ -558,6 +602,7 @@ class Proxy:
         self.anim = None
         if self.capturing:
             self.interactive = True
+        self.animated = False
         for item in self.queue:
             if item[0] == "anim":
                 item[0] = "raw"
@@ -573,6 +618,8 @@ class Proxy:
             if kind == "start":
                 self.queue.pop(0)
                 self.reset_command()
+                self.sound_wanted = data != b"q"
+                self.animated = False
                 continue
             if kind == "end":
                 self.queue.pop(0)
@@ -580,6 +627,9 @@ class Proxy:
                     # output did not end with a newline (zsh PROMPT_SP replacement)
                     self.write("\x1b[0;1;7m%\x1b[0m\r\n")
                     self.col = 0
+                if self.animated and self.sound_wanted:
+                    self.sound.play()
+                self.animated = False
                 continue
             if kind == "raw":
                 self.queue.pop(0)
@@ -635,6 +685,8 @@ class Proxy:
         self.col = model.col
         self.sgr = model.sgr
         self.anim = Animation(self.write, model, model.first_changed)
+        if self.anim.lines:
+            self.animated = True
         if self.anim.done:
             self.anim = None
 
